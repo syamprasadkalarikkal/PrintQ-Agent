@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PrintQ Agent icon">
+  <rect width="512" height="512" rx="96" fill="#155eef"/>
+  <rect x="132" y="116" width="248" height="120" rx="16" fill="#d9e8ff"/>
+  <rect x="108" y="196" width="296" height="184" rx="28" fill="#ffffff"/>
+  <rect x="148" y="284" width="216" height="112" rx="14" fill="#d9e8ff"/>
+  <circle cx="342" cy="252" r="18" fill="#155eef"/>
+  <circle cx="246" cy="338" r="44" fill="none" stroke="#155eef" stroke-width="28"/>
+  <path d="M278 370l44 44" stroke="#155eef" stroke-width="28" stroke-linecap="round"/>
+</svg>
