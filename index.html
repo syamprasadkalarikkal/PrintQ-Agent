@@ -2,8 +2,216 @@
 <html>
 <head>
   <title>PrintQ Agent</title>
+  <meta charset="UTF-8">
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
+  >
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f7fb;
+      color: #111827;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top left, rgba(14, 165, 233, 0.14), transparent 32rem),
+        #f4f7fb;
+    }
+
+    main {
+      width: min(920px, calc(100vw - 48px));
+      min-height: min(620px, calc(100vh - 48px));
+      display: grid;
+      place-items: center;
+      padding: 32px;
+    }
+
+    .panel {
+      width: 100%;
+      display: grid;
+      justify-items: center;
+      gap: 18px;
+      text-align: center;
+    }
+
+    .brand {
+      margin: 0;
+      font-size: clamp(32px, 6vw, 58px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: #475569;
+      font-size: 20px;
+    }
+
+    .qr-frame {
+      width: min(520px, 76vw, 68vh);
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 18px 48px rgba(15, 23, 42, 0.14);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+
+    .qr-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .countdown {
+      font-variant-numeric: tabular-nums;
+      font-size: clamp(24px, 4vw, 36px);
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      color: #475569;
+      font-size: 14px;
+    }
+
+    .pill {
+      border-radius: 999px;
+      background: #e2e8f0;
+      padding: 8px 12px;
+    }
+
+    .pill.warning {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .pill.ok {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .error {
+      width: min(720px, 100%);
+      border: 1px solid #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 8px;
+      padding: 24px;
+      text-align: left;
+      box-shadow: 0 18px 48px rgba(127, 29, 29, 0.12);
+    }
+
+    .error h1 {
+      margin: 0 0 12px;
+      font-size: 28px;
+    }
+
+    .error p {
+      margin: 8px 0;
+      color: #7f1d1d;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
 </head>
 <body>
-  <h1>PrintQ Linux Agent Running</h1>
+  <main>
+    <section id="qr-view" class="panel hidden" aria-live="polite">
+      <h1 class="brand">PrintQ Upload</h1>
+      <p class="subtitle">Scan the live counter QR to upload documents.</p>
+      <div class="qr-frame">
+        <img id="qr-image" alt="Live PrintQ upload QR code">
+      </div>
+      <div id="countdown" class="countdown">New QR in 05:00</div>
+      <div class="meta">
+        <span id="shop-pill" class="pill">Shop</span>
+        <span id="clock-pill" class="pill">Clock check pending</span>
+        <span id="local-pill" class="pill warning hidden">Localhost development URL</span>
+      </div>
+    </section>
+
+    <section id="error-view" class="error hidden" role="alert">
+      <h1>PrintQ setup needed</h1>
+      <p id="error-message"></p>
+      <p id="error-hint"></p>
+      <p>Set PUBLIC_WEBSITE_URL, SHOP_ID, and QR_ACCESS_SECRET in the agent environment or .env file. Use the same QR_ACCESS_SECRET on the website server only.</p>
+    </section>
+  </main>
+
+  <script>
+    const qrView = document.getElementById("qr-view");
+    const errorView = document.getElementById("error-view");
+    const qrImage = document.getElementById("qr-image");
+    const countdown = document.getElementById("countdown");
+    const shopPill = document.getElementById("shop-pill");
+    const clockPill = document.getElementById("clock-pill");
+    const localPill = document.getElementById("local-pill");
+    const errorMessage = document.getElementById("error-message");
+    const errorHint = document.getElementById("error-hint");
+
+    let currentState = null;
+
+    function formatDuration(ms) {
+      const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+      const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+      const seconds = String(totalSeconds % 60).padStart(2, "0");
+      return `${minutes}:${seconds}`;
+    }
+
+    function renderCountdown() {
+      if (!currentState?.ok) return;
+      countdown.textContent = `New QR in ${formatDuration(currentState.nextRefreshAt - Date.now())}`;
+    }
+
+    function renderState(state) {
+      currentState = state;
+
+      if (!state?.ok) {
+        qrView.classList.add("hidden");
+        errorView.classList.remove("hidden");
+        errorMessage.textContent = state?.error || "QR setup is not ready.";
+        errorHint.textContent = state?.serverHint || "";
+        return;
+      }
+
+      errorView.classList.add("hidden");
+      qrView.classList.remove("hidden");
+      qrImage.src = state.qrDataUrl;
+      shopPill.textContent = `Shop: ${state.shopId}`;
+      localPill.classList.toggle("hidden", !state.isLocalDevelopment);
+
+      const clockStatus = state.clockStatus || {};
+      clockPill.textContent = clockStatus.message || "Clock check pending";
+      clockPill.className = `pill ${clockStatus.ok ? "ok" : "warning"}`;
+      renderCountdown();
+    }
+
+    window.printqQr.onState(renderState);
+    window.printqQr.getState().then(renderState);
+    setInterval(renderCountdown, 1000);
+  </script>
 </body>
 </html>
