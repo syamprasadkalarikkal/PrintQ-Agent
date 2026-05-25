@@ -60,6 +60,7 @@ async function refreshQr() {
       expiresAt: qrUpload.expires * 1000,
       nextRefreshAt,
       shopId: config.shopId,
+      qrValiditySeconds: config.qrValiditySeconds,
       isLocalDevelopment: config.isLocalDevelopment,
       clockStatus,
     };

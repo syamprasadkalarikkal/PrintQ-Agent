@@ -148,6 +148,7 @@
       <div id="countdown" class="countdown">New QR in 05:00</div>
       <div class="meta">
         <span id="shop-pill" class="pill">Shop</span>
+        <span id="validity-pill" class="pill">Upload window</span>
         <span id="clock-pill" class="pill">Clock check pending</span>
         <span id="local-pill" class="pill warning hidden">Localhost development URL</span>
       </div>
@@ -167,6 +168,7 @@
     const qrImage = document.getElementById("qr-image");
     const countdown = document.getElementById("countdown");
     const shopPill = document.getElementById("shop-pill");
+    const validityPill = document.getElementById("validity-pill");
     const clockPill = document.getElementById("clock-pill");
     const localPill = document.getElementById("local-pill");
     const errorMessage = document.getElementById("error-message");
@@ -201,6 +203,7 @@
       qrView.classList.remove("hidden");
       qrImage.src = state.qrDataUrl;
       shopPill.textContent = `Shop: ${state.shopId}`;
+      validityPill.textContent = `Upload window: ${Math.round(state.qrValiditySeconds / 60)} min`;
       localPill.classList.toggle("hidden", !state.isLocalDevelopment);
 
       const clockStatus = state.clockStatus || {};

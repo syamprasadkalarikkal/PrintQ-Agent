@@ -1,8 +1,8 @@
 const crypto = require("node:crypto");
 const https = require("node:https");
 
-const QR_VALIDITY_SECONDS = 5 * 60;
 const QR_REFRESH_SECONDS = 4 * 60 + 45;
+const QR_VALIDITY_SECONDS = 15 * 60;
 const MAX_CLOCK_DRIFT_MS = 30 * 1000;
 
 function base64Url(buffer) {
@@ -17,11 +17,22 @@ function isLocalhost(hostname) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
+function getQrValiditySeconds(env = process.env) {
+  const configuredSeconds = Number(env.QR_VALIDITY_SECONDS);
+
+  if (!Number.isFinite(configuredSeconds) || configuredSeconds <= 0) {
+    return QR_VALIDITY_SECONDS;
+  }
+
+  return Math.max(Math.floor(configuredSeconds), QR_REFRESH_SECONDS + 60);
+}
+
 function getQrConfig(env = process.env) {
   const missing = [];
   const publicWebsiteUrl = env.PUBLIC_WEBSITE_URL;
   const shopId = env.SHOP_ID || "main-counter";
   const qrAccessSecret = env.QR_ACCESS_SECRET;
+  const qrValiditySeconds = getQrValiditySeconds(env);
 
   if (!publicWebsiteUrl) missing.push("PUBLIC_WEBSITE_URL");
   if (!qrAccessSecret) missing.push("QR_ACCESS_SECRET");
@@ -55,12 +66,13 @@ function getQrConfig(env = process.env) {
     publicWebsiteUrl,
     shopId,
     qrAccessSecret,
+    qrValiditySeconds,
     isLocalDevelopment: parsedUrl.protocol !== "https:" && isLocalhost(parsedUrl.hostname),
   };
 }
 
 function createQrUploadUrl(config, now = Date.now()) {
-  const expires = Math.floor(now / 1000) + QR_VALIDITY_SECONDS;
+  const expires = Math.floor(now / 1000) + config.qrValiditySeconds;
   const nonce = crypto.randomBytes(16).toString("base64url");
   const payload = `${config.shopId}.${expires}.${nonce}`;
   const qrSig = base64Url(
@@ -142,4 +154,5 @@ module.exports = {
   checkInternetClock,
   createQrUploadUrl,
   getQrConfig,
+  getQrValiditySeconds,
 };
