@@ -3,7 +3,9 @@ const path = require("path");
 const zlib = require("zlib");
 
 const iconDir = path.join(__dirname, "..", "assets", "icons");
+const icoPath = path.join(__dirname, "..", "assets", "icon.ico");
 const sizes = [16, 32, 48, 64, 128, 256, 512];
+const icoSizes = [16, 32, 48, 64, 128, 256];
 
 function crc32(buffer) {
   let crc = -1;
@@ -162,6 +164,46 @@ function drawIcon(size) {
 
 fs.mkdirSync(iconDir, { recursive: true });
 
+const icoImages = [];
+
 for (const size of sizes) {
-  fs.writeFileSync(path.join(iconDir, `${size}x${size}.png`), png(size, size, drawIcon(size)));
+  const image = png(size, size, drawIcon(size));
+  fs.writeFileSync(path.join(iconDir, `${size}x${size}.png`), image);
+
+  if (icoSizes.includes(size)) {
+    icoImages.push({ size, image });
+  }
 }
+
+function ico(images) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(images.length, 4);
+
+  const directorySize = header.length + images.length * 16;
+  let imageOffset = directorySize;
+  const entries = [];
+
+  for (const { size, image } of images) {
+    const entry = Buffer.alloc(16);
+    entry[0] = size >= 256 ? 0 : size;
+    entry[1] = size >= 256 ? 0 : size;
+    entry[2] = 0;
+    entry[3] = 0;
+    entry.writeUInt16LE(1, 4);
+    entry.writeUInt16LE(32, 6);
+    entry.writeUInt32LE(image.length, 8);
+    entry.writeUInt32LE(imageOffset, 12);
+    entries.push(entry);
+    imageOffset += image.length;
+  }
+
+  return Buffer.concat([
+    header,
+    ...entries,
+    ...images.map(({ image }) => image),
+  ]);
+}
+
+fs.writeFileSync(icoPath, ico(icoImages));

@@ -5,15 +5,27 @@
   "main": "main.js",
   "scripts": {
     "start": "node scripts/start-electron.js .",
-    "build": "electron-builder"
+    "build": "electron-builder --win",
+    "build:win": "electron-builder --win",
+    "icons": "node scripts/generate-icons.js"
   },
   "build": {
     "appId": "com.syam.printagent",
     "productName": "PrintQ Agent",
     "icon": "assets/icons",
-    "linux": {
-      "target": "AppImage"
-    }
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "asarUnpack": [
+      "**/node_modules/pdf-to-printer/**/*"
+    ]
   },
   "keywords": [],
   "author": "",
@@ -22,6 +34,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
     "axios": "^1.16.1",
+    "pdf-to-printer": "^5.8.0",
     "qrcode": "^1.5.4",
     "serialport": "^13.0.0"
   },

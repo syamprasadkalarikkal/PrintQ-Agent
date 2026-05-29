@@ -5,10 +5,13 @@ const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 const { pipeline } = require("stream/promises");
+const { pathToFileURL } = require("url");
 const supabase = require("./supabase");
 
 const STORAGE_BUCKET = process.env.PRINT_STORAGE_BUCKET || "print-queue";
-const DEFAULT_PDF_DIR = path.join(os.homedir(), "PDF");
+const DEFAULT_PDF_DIR = process.platform === "win32"
+  ? path.join(os.homedir(), "Documents", "PrintQ PDF")
+  : path.join(os.homedir(), "PDF");
 const DEFAULT_PRINT_DELAY_MS = 1500;
 const DEFAULT_PRINT_TIMEOUT_MS = 60000;
 const DEFAULT_PDF_WAIT_TIMEOUT_MS = 30000;
@@ -162,6 +165,30 @@ function runCommand(command, args, timeout = 10000) {
   });
 }
 
+async function logWindowsPrinterState(printerName, debug) {
+  const script = [
+    "Get-Printer",
+    "|",
+    "Select-Object Name,Default,PrinterStatus,DriverName,PortName",
+    "|",
+    "Format-Table -AutoSize",
+  ];
+
+  if (printerName) {
+    script.push(";", `Get-PrintJob -PrinterName ${JSON.stringify(printerName)} | Format-Table -AutoSize`);
+  }
+
+  const result = await runCommand("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script.join(" "),
+  ]);
+  const output = [result.stdout, result.stderr, result.error].filter(Boolean).join(" | ");
+  logDebug(debug, "$ powershell.exe Get-Printer", output || "(no output)");
+}
+
 async function logCupsState(printerName, debug) {
   const commands = [
     ["lpstat", ["-r"]],
@@ -209,6 +236,8 @@ function isPdfPrinter(printer) {
   const text = printerText(printer);
   return (
     /\bcups[-_\s]?pdf\b/i.test(text) ||
+    /\bmicrosoft[-_\s]?print[-_\s]?to[-_\s]?pdf\b/i.test(text) ||
+    /\badobe[-_\s]?pdf\b/i.test(text) ||
     /\bprint[-_\s]?to[-_\s]?pdf\b/i.test(text) ||
     /\bpdf[-_\s]?printer\b/i.test(text) ||
     /\bvirtual[-_\s]?pdf\b/i.test(text) ||
@@ -236,16 +265,26 @@ async function detectPrinters(webContents, options = {}) {
   }
 
   const debug = options.debug !== false;
-  const preferredNames = [
+  const requirePdfPrinter = options.requirePdfPrinter !== false;
+  const configuredNames = [
     options.printerName,
-    process.env.PDF_PRINTER_NAME,
-    process.env.PRINTER_NAME,
+    ...(requirePdfPrinter
+      ? [process.env.PDF_PRINTER_NAME, process.env.PRINTER_NAME]
+      : [process.env.PRINTER_NAME, process.env.PDF_PRINTER_NAME]),
+  ].filter(Boolean);
+  const pdfPrinterNames = [
     "CUPS-PDF",
     "CUPS_PDF",
     "Print_to_PDF",
     "Print to PDF",
+    "Microsoft Print to PDF",
+    "Adobe PDF",
     "PDF",
-  ].filter(Boolean);
+  ];
+  const preferredNames = [
+    ...configuredNames,
+    ...(requirePdfPrinter ? pdfPrinterNames : []),
+  ];
 
   const printers = await webContents.getPrintersAsync();
   logDebug(debug, `Detected ${printers.length} printer(s) with getPrintersAsync().`);
@@ -255,6 +294,12 @@ async function detectPrinters(webContents, options = {}) {
   }
 
   if (!printers.length) {
+    if (process.platform === "win32") {
+      throw new Error(
+        "Electron did not detect any Windows printers. Add a printer in Windows Settings and set PRINTER_NAME if you do not want to use the default printer."
+      );
+    }
+
     throw new Error(
       "Electron did not detect any printers. Confirm CUPS is running (`lpstat -r`) and that the virtual PDF printer is installed."
     );
@@ -273,6 +318,24 @@ async function detectPrinters(webContents, options = {}) {
     }
   }
 
+  if (!requirePdfPrinter && configuredNames.length) {
+    throw new Error(
+      [
+        `Configured printer was not found: ${configuredNames.join(", ")}.`,
+        `Detected printers: ${printers.map((printer) => printer.name).join(", ") || "(none)"}.`,
+        "Update PRINTER_NAME to the exact Windows printer name, or remove it to use the default printer.",
+      ].join(" ")
+    );
+  }
+
+  const defaultPrinter = printers.find((printer) => printer.isDefault);
+
+  if (!requirePdfPrinter) {
+    const selected = defaultPrinter || printers[0];
+    logDebug(debug, `Selected ${selected.isDefault ? "default" : "first available"} printer: ${selected.name}`);
+    return { printer: selected, printers, reason: selected.isDefault ? "default-printer" : "first-printer" };
+  }
+
   const pdfCandidates = printers.filter(isPdfPrinter);
   if (pdfCandidates.length) {
     const defaultPdf = pdfCandidates.find((printer) => printer.isDefault);
@@ -281,7 +344,6 @@ async function detectPrinters(webContents, options = {}) {
     return { printer: selected, printers, reason: "pdf-candidate" };
   }
 
-  const defaultPrinter = printers.find((printer) => printer.isDefault);
   if (defaultPrinter && isPdfPrinter(defaultPrinter)) {
     logDebug(debug, `Selected default PDF printer: ${defaultPrinter.name}`);
     return { printer: defaultPrinter, printers, reason: "default-pdf" };
@@ -299,7 +361,9 @@ async function detectPrinters(webContents, options = {}) {
     [
       "No PDF virtual printer was found in Electron's printer list.",
       `Detected printers: ${printers.map((printer) => printer.name).join(", ") || "(none)"}.`,
-      "Set PDF_PRINTER_NAME or PRINTER_NAME to the exact CUPS printer name, or install/enable CUPS-PDF.",
+      process.platform === "win32"
+        ? "Set PDF_PRINTER_NAME or PRINTER_NAME to the exact Windows printer name, or enable Microsoft Print to PDF."
+        : "Set PDF_PRINTER_NAME or PRINTER_NAME to the exact CUPS printer name, or install/enable CUPS-PDF.",
     ].join(" ")
   );
 }
@@ -346,6 +410,15 @@ async function loadHTML(win, html, options = {}) {
 
   logDebug(debug, `Loading HTML content into print window (${String(html || "").length} chars).`);
   await Promise.all([finished, win.loadURL(dataUrl, { baseURLForDataURL: baseUrl })]);
+}
+
+async function loadFile(win, filePath, options = {}) {
+  const debug = options.debug !== false;
+  const finished = waitForDidFinishLoad(win, debug);
+  const fileUrl = pathToFileURL(filePath).toString();
+
+  logDebug(debug, `Loading print file into hidden window: ${fileUrl}`);
+  await Promise.all([finished, win.loadURL(fileUrl)]);
 }
 
 async function waitForPageAssets(win, options = {}) {
@@ -482,6 +555,168 @@ function buildPrintOptions(printerName, options = {}) {
   return printOptions;
 }
 
+function buildPdfOptions(options = {}) {
+  const pdfOptions = {
+    printBackground: options.printBackground !== false,
+  };
+
+  if (options.pageSize) pdfOptions.pageSize = options.pageSize;
+  if (options.landscape !== undefined) pdfOptions.landscape = Boolean(options.landscape);
+  if (options.margins) pdfOptions.margins = options.margins;
+  if (options.scaleFactor) pdfOptions.scale = Number(options.scaleFactor);
+  if (options.pageRanges) pdfOptions.pageRanges = options.pageRanges;
+
+  return pdfOptions;
+}
+
+function safePdfFileName(value) {
+  const name = String(value || `printq-${Date.now()}.pdf`)
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .slice(0, 120);
+
+  return name.toLowerCase().endsWith(".pdf") ? name : `${name}.pdf`;
+}
+
+async function uniquePdfPath(outputDir, fileName) {
+  const parsed = path.parse(safePdfFileName(fileName));
+  let candidate = path.join(outputDir, `${parsed.name}${parsed.ext}`);
+  let index = 1;
+
+  while (true) {
+    try {
+      await fsp.access(candidate);
+      candidate = path.join(outputDir, `${parsed.name}-${index}${parsed.ext}`);
+      index += 1;
+    } catch (error) {
+      if (error.code === "ENOENT") return candidate;
+      throw error;
+    }
+  }
+}
+
+function normalizePageSize(value) {
+  const paperSize = String(value || "").trim().toLowerCase();
+  const knownSizes = new Map([
+    ["a3", "A3"],
+    ["a4", "A4"],
+    ["a5", "A5"],
+    ["legal", "Legal"],
+    ["letter", "Letter"],
+    ["tabloid", "Tabloid"],
+  ]);
+
+  return knownSizes.get(paperSize) || value;
+}
+
+function jobDuplexMode(job) {
+  const twoSided = String(job.two_sided || "").toLowerCase();
+
+  if (twoSided.includes("short")) return "shortEdge";
+  if (twoSided.includes("long")) return "longEdge";
+  if (twoSided.includes("single") || twoSided.includes("simplex")) return "simplex";
+  return undefined;
+}
+
+function jobColor(job) {
+  const colorMode = String(job.color_mode || "").toLowerCase();
+
+  if (colorMode.includes("black") || colorMode.includes("white") || colorMode.includes("mono")) return false;
+  if (colorMode.includes("color")) return true;
+  return undefined;
+}
+
+function buildPrintOptionsFromJob(printerName, job, options = {}) {
+  const pagesPerSheet = Number(job.pages_per_side);
+  const color = jobColor(job);
+  const duplexMode = jobDuplexMode(job);
+
+  return buildPrintOptions(printerName, {
+    ...options,
+    copies: job.copies,
+    pageSize: job.paper_size ? normalizePageSize(job.paper_size) : options.pageSize,
+    landscape: String(job.orientation || "").toLowerCase() === "landscape" || options.landscape,
+    color: color === undefined ? options.color : color,
+    duplexMode: duplexMode || options.duplexMode,
+    pagesPerSheet: [2, 4, 6, 9, 16].includes(pagesPerSheet) ? pagesPerSheet : options.pagesPerSheet,
+  });
+}
+
+async function printFileWithElectron(filePath, job, options = {}) {
+  const { app, BrowserWindow } = getElectron();
+  await ensureAppReady(app);
+
+  const debug = options.debug !== false;
+  const printDelayMs = Number(options.printDelayMs) || DEFAULT_PRINT_DELAY_MS;
+  const printTimeoutMs = Number(options.printTimeoutMs) || DEFAULT_PRINT_TIMEOUT_MS;
+  const queueSettleMs = Number(options.queueSettleMs) || DEFAULT_QUEUE_SETTLE_MS;
+  let win;
+
+  try {
+    win = new BrowserWindow({
+      show: Boolean(options.showWindow),
+      width: options.width || 1024,
+      height: options.height || 1440,
+      backgroundColor: "#ffffff",
+      autoHideMenuBar: true,
+      paintWhenInitiallyHidden: true,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        plugins: true,
+        backgroundThrottling: false,
+      },
+    });
+
+    win.on("unresponsive", () => logWarn("Print BrowserWindow became unresponsive."));
+    await loadFile(win, filePath, options);
+    await waitForPageAssets(win, options);
+
+    const { printer, printers, reason } = await detectPrinters(win.webContents, {
+      ...options,
+      requirePdfPrinter: false,
+    });
+    const printerName = printer.name;
+
+    if (!printerName) {
+      throw new Error("Selected printer is missing its system device name.");
+    }
+
+    logDebug(debug, `Using Windows deviceName "${printerName}" (${reason}).`);
+    await logWindowsPrinterState(printerName, debug);
+
+    if (options.showWindow) win.focus();
+
+    logDebug(debug, `Waiting ${printDelayMs}ms before silent printing.`);
+    await sleep(printDelayMs);
+
+    const printOptions = buildPrintOptionsFromJob(printerName, job, options);
+    await printWebContents(win.webContents, printOptions, printTimeoutMs, debug);
+
+    logDebug(debug, `Waiting ${queueSettleMs}ms before checking Windows printer queue.`);
+    await sleep(queueSettleMs);
+    await logWindowsPrinterState(printerName, debug);
+
+    return {
+      success: true,
+      printerName,
+      printers,
+    };
+  } catch (error) {
+    logWarn("Windows silent print troubleshooting:");
+    logWarn("- Verify the exact printer name in Windows Settings and set PRINTER_NAME if needed.");
+    logWarn("- Confirm the file type can be opened by Electron/Chromium; PDFs are supported by the built-in viewer.");
+    logWarn("- If silent print fails, try showWindow=true once to expose renderer issues.");
+    logWarn(error.message);
+    throw error;
+  } finally {
+    if (win && !win.isDestroyed()) {
+      logDebug(debug, "Closing print BrowserWindow.");
+      win.close();
+    }
+  }
+}
+
 async function printHTML(html, options = {}) {
   const { app, BrowserWindow } = getElectron();
   await ensureAppReady(app);
@@ -521,6 +756,21 @@ async function printHTML(html, options = {}) {
     await loadHTML(win, html, options);
     await waitForPageAssets(win, options);
 
+    if (process.platform === "win32" && options.useSystemPdfPrinter !== true) {
+      const pdfPath = await uniquePdfPath(outputDir, options.outputFileName || options.fileName);
+      const pdfData = await win.webContents.printToPDF(buildPdfOptions(options));
+      await fsp.writeFile(pdfPath, pdfData);
+      logDebug(debug, `PDF generated with Electron printToPDF: ${pdfPath} (${pdfData.length} bytes).`);
+
+      return {
+        success: true,
+        printerName: "electron-print-to-pdf",
+        pdfPath,
+        outputDir,
+        printers: [],
+      };
+    }
+
     const { printer, printers, reason } = await detectPrinters(win.webContents, options);
     const printerName = printer.name;
 
@@ -528,24 +778,32 @@ async function printHTML(html, options = {}) {
       throw new Error("Selected printer is missing its system device name.");
     }
 
-    logDebug(debug, `Using CUPS deviceName "${printerName}" (${reason}).`);
+    logDebug(debug, `Using ${process.platform === "win32" ? "Windows" : "CUPS"} deviceName "${printerName}" (${reason}).`);
     logDebug(debug, `Expected PDF output directory: ${outputDir}`);
-    await logCupsState(printerName, debug);
+    if (process.platform === "win32") {
+      await logWindowsPrinterState(printerName, debug);
+    } else {
+      await logCupsState(printerName, debug);
+    }
 
     const beforeFiles = await listPdfFiles(outputDir);
     logDebug(debug, `PDF files before print: ${beforeFiles.length}`);
 
     if (options.showWindow) win.focus();
 
-    logDebug(debug, `Waiting ${printDelayMs}ms before silent printing to let Linux rendering settle.`);
+    logDebug(debug, `Waiting ${printDelayMs}ms before silent printing.`);
     await sleep(printDelayMs);
 
     const printOptions = buildPrintOptions(printerName, options);
     await printWebContents(win.webContents, printOptions, printTimeoutMs, debug);
 
-    logDebug(debug, `Waiting ${queueSettleMs}ms before checking CUPS queue and PDF output.`);
+    logDebug(debug, `Waiting ${queueSettleMs}ms before checking printer queue and PDF output.`);
     await sleep(queueSettleMs);
-    await logCupsState(printerName, debug);
+    if (process.platform === "win32") {
+      await logWindowsPrinterState(printerName, debug);
+    } else {
+      await logCupsState(printerName, debug);
+    }
 
     const pdfPath = await waitForGeneratedPdf(outputDir, beforeFiles, {
       debug,
@@ -561,9 +819,15 @@ async function printHTML(html, options = {}) {
     };
   } catch (error) {
     logWarn("Silent print troubleshooting:");
-    logWarn("- Verify the exact CUPS printer name with `lpstat -v` or set PDF_PRINTER_NAME.");
-    logWarn("- Verify CUPS is running on localhost:631 with `lpstat -r`.");
-    logWarn("- Verify the CUPS-PDF output directory is ~/PDF or set PDF_OUTPUT_DIR.");
+    if (process.platform === "win32") {
+      logWarn("- Verify the exact printer name in Windows Settings and set PDF_PRINTER_NAME or PRINTER_NAME.");
+      logWarn("- Verify Microsoft Print to PDF is enabled if you are generating PDFs.");
+      logWarn(`- Verify the PDF output directory is ${DEFAULT_PDF_DIR} or set PDF_OUTPUT_DIR.`);
+    } else {
+      logWarn("- Verify the exact CUPS printer name with `lpstat -v` or set PDF_PRINTER_NAME.");
+      logWarn("- Verify CUPS is running on localhost:631 with `lpstat -r`.");
+      logWarn("- Verify the CUPS-PDF output directory is ~/PDF or set PDF_OUTPUT_DIR.");
+    }
     logWarn("- If Electron sees printers but silent print fails, try showWindow=true once to expose renderer issues.");
     logWarn(error.message);
     throw error;
@@ -596,12 +860,53 @@ async function downloadAndPrint(jobOrUrl, token) {
       await downloadFromUrl(job.file_url, destination);
     }
 
-    const args = buildPrintArgs(destination, job);
-    console.log(`[printer] Sending file to CUPS with lp ${args.map((arg) => JSON.stringify(arg)).join(" ")}.`);
-    const { stdout, stderr } = await runLp(args);
+    if (process.platform === "win32") {
+      console.log("[printer] Sending file to Windows printer through pdf-to-printer.");
+      const { print } = require("pdf-to-printer");
+      const printerName = process.env.PRINTER_NAME || process.env.PDF_PRINTER_NAME;
 
-    if (stdout) console.log(stdout.trim());
-    if (stderr) console.warn(stderr.trim());
+      const printOptions = {
+        printer: printerName,
+        copies: Math.max(Number(job.copies) || 1, 1),
+        silent: true,
+      };
+
+      if (job.paper_size) {
+        printOptions.paperSize = normalizePageSize(job.paper_size);
+      }
+
+      if (String(job.orientation || "").toLowerCase() === "landscape") {
+        printOptions.orientation = "landscape";
+      } else if (String(job.orientation || "").toLowerCase() === "portrait") {
+        printOptions.orientation = "portrait";
+      }
+
+      const colorMode = String(job.color_mode || "").toLowerCase();
+      if (colorMode.includes("black") || colorMode.includes("white") || colorMode.includes("mono")) {
+        printOptions.monochrome = true;
+      } else if (colorMode.includes("color")) {
+        printOptions.monochrome = false;
+      }
+
+      const twoSided = String(job.two_sided || "").toLowerCase();
+      if (twoSided.includes("short")) {
+        printOptions.side = "duplexshort";
+      } else if (twoSided.includes("long")) {
+        printOptions.side = "duplexlong";
+      } else if (twoSided.includes("single")) {
+        printOptions.side = "simplex";
+      }
+
+      console.log(`[printer] Printing with options: ${JSON.stringify(printOptions)}`);
+      await print(destination, printOptions);
+    } else {
+      const args = buildPrintArgs(destination, job);
+      console.log(`[printer] Sending file to CUPS with lp ${args.map((arg) => JSON.stringify(arg)).join(" ")}.`);
+      const { stdout, stderr } = await runLp(args);
+
+      if (stdout) console.log(stdout.trim());
+      if (stderr) console.warn(stderr.trim());
+    }
 
     console.log(`Printed job ${job.id || job.customer_token || job.token || destination}`);
   } finally {
@@ -614,3 +919,5 @@ module.exports.downloadAndPrint = downloadAndPrint;
 module.exports.printHTML = printHTML;
 module.exports.detectPrinters = detectPrinters;
 module.exports.logCupsState = logCupsState;
+module.exports.logWindowsPrinterState = logWindowsPrinterState;
+module.exports.printFileWithElectron = printFileWithElectron;
