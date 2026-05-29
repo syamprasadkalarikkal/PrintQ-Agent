@@ -54,10 +54,79 @@ async function removeJobRow(job) {
   throw new Error("Cannot delete print job row without id or customer_token plus file_path.");
 }
 
+async function archiveJobStats(job) {
+  const copies = Math.max(Number(job.copies) || 1, 1);
+  const pageCount = Math.max(Number(job.total_print_pages) || Number(job.page_count) || 1, 1);
+  const totalPrints = pageCount * copies;
+
+  const colorMode = String(job.color_mode || "").toLowerCase();
+  const isColor = !colorMode.includes("black") && !colorMode.includes("white") && !colorMode.includes("mono") && colorMode.includes("color");
+  const earnings = Number(job.total_amount || job.price || job.amount || job.cost || job.earnings || 0);
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  // 1. Try using the atomic SQL Function (RPC) for perfect concurrency safety
+  const { error: rpcError } = await supabase.rpc("increment_daily_print_summary", {
+    p_date: today,
+    p_copies: totalPrints,
+    p_is_color: isColor,
+    p_earnings: earnings,
+  });
+
+  if (!rpcError) return;
+
+  // 2. Fallback to JS Upsert if the RPC function isn't created in Supabase yet
+  console.warn("[cleanup] RPC function not found or failed, falling back to JS upsert:", rpcError.message);
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("completed_print_jobs")
+    .select("*")
+    .eq("report_date", today)
+    .maybeSingle();
+
+  if (fetchError) throw fetchError;
+
+  if (existing) {
+    const { error: updateError } = await supabase
+      .from("completed_print_jobs")
+      .update({
+        total_prints: (existing.total_prints || 0) + totalPrints,
+        black_and_white_prints: (existing.black_and_white_prints || 0) + (isColor ? 0 : totalPrints),
+        color_prints: (existing.color_prints || 0) + (isColor ? totalPrints : 0),
+        total_earnings: Number(existing.total_earnings || 0) + earnings,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+
+    if (updateError) throw updateError;
+  } else {
+    const { error: insertError } = await supabase
+      .from("completed_print_jobs")
+      .insert([
+        {
+          report_date: today,
+          total_prints: totalPrints,
+          black_and_white_prints: isColor ? 0 : totalPrints,
+          color_prints: isColor ? totalPrints : 0,
+          total_earnings: earnings,
+        },
+      ]);
+
+    if (insertError) throw insertError;
+  }
+}
+
 async function cleanupPrintedJob(job) {
+  try {
+    await archiveJobStats(job);
+  } catch (archiveError) {
+    console.error("Skipping cleanup because archiving failed:", archiveError);
+    throw archiveError;
+  }
+
   await removeStoredPdf(job);
   await removeJobRow(job);
-  console.log(`Removed printed job ${jobLabel(job)} from Supabase table and storage.`);
+  console.log(`Archived and removed printed job ${jobLabel(job)} from Supabase table and storage.`);
 }
 
 function schedulePrintedJobCleanup(job, delayMs = CLEANUP_DELAY_MS) {

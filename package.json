@@ -1,8 +1,11 @@
 {
   "name": "printq-agent",
   "version": "1.0.0",
-  "description": "",
+  "description": "PrintQ Smart Self-Service Printing Agent",
+  "author": "Syam Prasad",
+  "license": "ISC",
   "main": "main.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node scripts/start-electron.js .",
     "build": "electron-builder --win",
@@ -12,6 +15,12 @@
   "build": {
     "appId": "com.syam.printagent",
     "productName": "PrintQ Agent",
+    "files": [
+      "**/*",
+      "!**/.env",
+      "!dist/**/*",
+      "!node_modules/.cache/**/*"
+    ],
     "icon": "assets/icons",
     "win": {
       "target": "nsis",
@@ -27,16 +36,17 @@
       "**/node_modules/pdf-to-printer/**/*"
     ]
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
+  "keywords": [
+    "printq",
+    "printing",
+    "electron",
+    "supabase"
+  ],
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
     "axios": "^1.16.1",
     "pdf-to-printer": "^5.8.0",
-    "qrcode": "^1.5.4",
-    "serialport": "^13.0.0"
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "electron": "^42.1.0",
