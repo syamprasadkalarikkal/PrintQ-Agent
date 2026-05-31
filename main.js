@@ -45,7 +45,7 @@ async function refreshQr() {
 
   try {
     const nextRefreshAt = Date.now() + QR_REFRESH_SECONDS * 1000;
-    const qrUpload = createQrUploadUrl(config);
+    const qrUpload = await createQrUploadUrl(config);
     const qrDataUrl = await QRCode.toDataURL(qrUpload.url, {
       errorCorrectionLevel: "M",
       margin: 2,
