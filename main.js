@@ -16,6 +16,7 @@ setupProcessErrorHandlers();
 let mainWindow;
 let qrState = {
   ok: false,
+  loading: true,
   error: "QR is starting.",
 };
 let qrTimer;
@@ -66,10 +67,10 @@ async function refreshQr() {
       isLocalDevelopment: config.isLocalDevelopment,
       clockStatus,
     };
-  } catch {
+  } catch (err) {
     qrState = {
       ok: false,
-      error: "Could not generate the QR code.",
+      error: `Could not generate the QR code: ${err.message}`,
     };
   }
 

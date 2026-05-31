@@ -92,7 +92,8 @@ async function createQrUploadUrl(config, now = Date.now()) {
   } else {
     // Server-side signing via Supabase Edge Function (Production secure method)
     const supabase = require("./supabase");
-    const { data, error } = await supabase.functions.invoke("qr-signature", {
+    const functionName = process.env.SUPABASE_FUNCTION_NAME || "qr-signature";
+    const { data, error } = await supabase.functions.invoke(functionName, {
       body: { shopId: config.shopId, qrValiditySeconds: config.qrValiditySeconds },
     });
 

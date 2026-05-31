@@ -1,12 +1,11 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <title>PrintQ Agent</title>
   <meta charset="UTF-8">
-  <meta
-    http-equiv="Content-Security-Policy"
-    content="default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
-  >
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
   <style>
     :root {
       color-scheme: light;
@@ -137,8 +136,14 @@
     }
   </style>
 </head>
+
 <body>
   <main>
+    <section id="loading-view" class="panel" aria-live="polite">
+      <h1 class="brand">PrintQ</h1>
+      <p class="subtitle">Starting up and generating QR code...</p>
+    </section>
+
     <section id="qr-view" class="panel hidden" aria-live="polite">
       <h1 class="brand">PrintQ Upload</h1>
       <p class="subtitle">Scan the live counter QR to upload documents.</p>
@@ -158,11 +163,21 @@
       <h1>PrintQ setup needed</h1>
       <p id="error-message"></p>
       <p id="error-hint"></p>
-      <p>Set PUBLIC_WEBSITE_URL, SHOP_ID, and QR_ACCESS_SECRET in the agent environment or .env file. Use the same QR_ACCESS_SECRET on the website server only.</p>
+      <p>Ensure that either:</p>
+      <ul>
+        <li><strong>Option A (Server-side signing):</strong> You have deployed the Supabase Edge Function
+          (<code>supabase/functions/index.ts</code>) and set the <code>QR_ACCESS_SECRET</code> environment variable in
+          your Supabase dashboard.</li>
+        <li><strong>Option B (Local signing):</strong> You have set <code>QR_ACCESS_SECRET</code> in the local
+          <code>.env</code> file.</li>
+      </ul>
+      <p>Also, verify that <code>PUBLIC_WEBSITE_URL</code> and <code>SHOP_ID</code> are correctly configured in your
+        <code>.env</code> file.</p>
     </section>
   </main>
 
   <script>
+    const loadingView = document.getElementById("loading-view");
     const qrView = document.getElementById("qr-view");
     const errorView = document.getElementById("error-view");
     const qrImage = document.getElementById("qr-image");
@@ -191,6 +206,15 @@
     function renderState(state) {
       currentState = state;
 
+      if (state?.loading) {
+        loadingView.classList.remove("hidden");
+        qrView.classList.add("hidden");
+        errorView.classList.add("hidden");
+        return;
+      }
+
+      loadingView.classList.add("hidden");
+
       if (!state?.ok) {
         qrView.classList.add("hidden");
         errorView.classList.remove("hidden");
@@ -217,4 +241,5 @@
     setInterval(renderCountdown, 1000);
   </script>
 </body>
+
 </html>
