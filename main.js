@@ -1,7 +1,8 @@
 const path = require("path");
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const QRCode = require("qrcode");
 const { loadEnvFile } = require("./env");
+const { setupProcessErrorHandlers, setupAutoStart, startWithWatchdog } = require("./watchdog");
 const {
   QR_REFRESH_SECONDS,
   checkInternetClock,
@@ -10,6 +11,7 @@ const {
 } = require("./qr");
 
 loadEnvFile();
+setupProcessErrorHandlers();
 
 let mainWindow;
 let qrState = {
@@ -102,6 +104,7 @@ function createWindow() {
     width: 1000,
     height: 700,
     icon: path.join(__dirname, "assets", "icons", "512x512.png"),
+    autoHideMenuBar: true,   // hide menu bar – cleaner kiosk look
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -109,7 +112,26 @@ function createWindow() {
     },
   });
 
+  mainWindow.maximize();           // fill the screen on every startup
   mainWindow.loadFile("index.html");
+
+  // Intercept the close button – ask for confirmation before quitting.
+  // This prevents staff from accidentally closing the kiosk display.
+  mainWindow.on("close", (event) => {
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: "question",
+      buttons: ["Keep Running", "Close App"],
+      defaultId: 0,
+      cancelId: 0,
+      title: "Close PrintQ Agent?",
+      message: "Closing PrintQ Agent will stop the print queue and the QR display.",
+      detail: "Are you sure you want to close the app?",
+    });
+
+    if (choice === 0) {
+      event.preventDefault(); // staff clicked "Keep Running" – do nothing
+    }
+  });
 
 }
 
@@ -119,10 +141,11 @@ app.whenReady().then(() => {
 
   createWindow();
   startQrRotation();
+  setupAutoStart(app);
 
   try {
     const { startQueueWorker } = require("./queueWorker");
-    startQueueWorker();
+    startWithWatchdog(startQueueWorker);
   } catch (error) {
     console.error("Print queue worker did not start:", error.message);
   }
