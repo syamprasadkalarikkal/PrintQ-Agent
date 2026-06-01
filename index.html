@@ -163,16 +163,14 @@
       <h1>PrintQ setup needed</h1>
       <p id="error-message"></p>
       <p id="error-hint"></p>
-      <p>Ensure that either:</p>
+      <p>Ensure that:</p>
       <ul>
-        <li><strong>Option A (Server-side signing):</strong> You have deployed the Supabase Edge Function
-          (<code>supabase/functions/index.ts</code>) and set the <code>QR_ACCESS_SECRET</code> environment variable in
-          your Supabase dashboard.</li>
-        <li><strong>Option B (Local signing):</strong> You have set <code>QR_ACCESS_SECRET</code> in the local
-          <code>.env</code> file.</li>
+        <li>You have deployed the Supabase Edge Function
+          (<code>supabase/functions/dynamic-function/index.ts</code>) and set the <code>QR_ACCESS_SECRET</code>
+          environment variable in your Supabase dashboard.</li>
       </ul>
-      <p>Also, verify that <code>PUBLIC_WEBSITE_URL</code> and <code>SHOP_ID</code> are correctly configured in your
-        <code>.env</code> file.</p>
+      <p>Also, verify that <code>PUBLIC_WEBSITE_URL</code>, <code>SHOP_ID</code>, and <code>DESKTOP_ID</code> are
+        correctly configured in your <code>.env</code> file.</p>
     </section>
   </main>
 

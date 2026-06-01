@@ -50,3 +50,4 @@ Thumbs.db
 # Local Codex/agent metadata
 .agents/
 .codex/
+supabase/.temp/

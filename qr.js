@@ -1,17 +1,8 @@
-const crypto = require("node:crypto");
 const https = require("node:https");
 
 const QR_REFRESH_SECONDS = 4 * 60 + 45;
 const QR_VALIDITY_SECONDS = 15 * 60;
 const MAX_CLOCK_DRIFT_MS = 30 * 1000;
-
-function base64Url(buffer) {
-  return buffer
-    .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
 
 function isLocalhost(hostname) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
@@ -31,7 +22,7 @@ function getQrConfig(env = process.env) {
   const missing = [];
   const publicWebsiteUrl = env.PUBLIC_WEBSITE_URL;
   const shopId = env.SHOP_ID || "main-counter";
-  const qrAccessSecret = env.QR_ACCESS_SECRET;
+  const desktopId = env.DESKTOP_ID || "main-counter-desktop";
   const qrValiditySeconds = getQrValiditySeconds(env);
 
   if (!publicWebsiteUrl) missing.push("PUBLIC_WEBSITE_URL");
@@ -64,53 +55,66 @@ function getQrConfig(env = process.env) {
     ok: true,
     publicWebsiteUrl,
     shopId,
-    qrAccessSecret,
+    desktopId,
     qrValiditySeconds,
     isLocalDevelopment: parsedUrl.protocol !== "https:" && isLocalhost(parsedUrl.hostname),
   };
 }
 
-async function createQrUploadUrl(config, now = Date.now()) {
-  if (config.qrAccessSecret) {
-    // Local signing fallback (for development/legacy configs)
-    const expires = Math.floor(now / 1000) + config.qrValiditySeconds;
-    const nonce = crypto.randomBytes(16).toString("base64url");
-    const payload = `${config.shopId}.${expires}.${nonce}`;
-    const qrSig = base64Url(
-      crypto.createHmac("sha256", config.qrAccessSecret).update(payload).digest()
-    );
+async function getEdgeFunctionErrorMessage(error) {
+  if (!error) return "Invalid signature payload received";
 
-    const url = new URL(config.publicWebsiteUrl);
-    url.searchParams.set("shop", config.shopId);
-    url.searchParams.set("qr_expires", String(expires));
-    url.searchParams.set("qr_nonce", nonce);
-    url.searchParams.set("qr_sig", qrSig);
-    return {
-      expires,
-      url: url.toString(),
-    };
-  } else {
-    // Server-side signing via Supabase Edge Function (Production secure method)
-    const supabase = require("./supabase");
-    const functionName = process.env.SUPABASE_FUNCTION_NAME || "qr-signature";
-    const { data, error } = await supabase.functions.invoke(functionName, {
-      body: { shopId: config.shopId, qrValiditySeconds: config.qrValiditySeconds },
-    });
-
-    if (error || !data || !data.qrSig) {
-      throw new Error(`Edge Function signing failed: ${error?.message || "Invalid signature payload received"}`);
-    }
-
-    const url = new URL(config.publicWebsiteUrl);
-    url.searchParams.set("shop", config.shopId);
-    url.searchParams.set("qr_expires", String(data.expires));
-    url.searchParams.set("qr_nonce", data.nonce);
-    url.searchParams.set("qr_sig", data.qrSig);
-    return {
-      expires: data.expires,
-      url: url.toString(),
-    };
+  const response = error.context;
+  if (!response || typeof response.clone !== "function") {
+    return error.message || "Unknown Edge Function error";
   }
+
+  let detail = "";
+  try {
+    const text = await response.clone().text();
+    if (text) {
+      try {
+        const parsed = JSON.parse(text);
+        detail = parsed.error || parsed.message || text;
+      } catch {
+        detail = text;
+      }
+    }
+  } catch {
+    detail = "";
+  }
+
+  const status = response.status ? `HTTP ${response.status}` : "";
+  const message = detail || error.message || "Unknown Edge Function error";
+  return [status, message].filter(Boolean).join(": ");
+}
+
+async function createQrUploadUrl(config) {
+  // Server-side signing via Supabase Edge Function
+  const supabase = require("./supabase");
+  const functionName = process.env.SUPABASE_FUNCTION_NAME || "qr-signature";
+  const { data, error } = await supabase.functions.invoke(functionName, {
+    body: {
+      shopId: config.shopId,
+      desktopId: config.desktopId,
+      qrValiditySeconds: config.qrValiditySeconds,
+    },
+  });
+
+  if (error || !data || !data.qrSig) {
+    throw new Error(`Edge Function signing failed (${functionName}): ${await getEdgeFunctionErrorMessage(error)}`);
+  }
+
+  const url = new URL(config.publicWebsiteUrl);
+  url.searchParams.set("shop", config.shopId);
+  url.searchParams.set("desktop", config.desktopId);
+  url.searchParams.set("qr_expires", String(data.expires));
+  url.searchParams.set("qr_nonce", data.nonce);
+  url.searchParams.set("qr_sig", data.qrSig);
+  return {
+    expires: data.expires,
+    url: url.toString(),
+  };
 }
 
 function checkInternetClock(clockUrl = process.env.CLOCK_CHECK_URL || "https://www.google.com/generate_204") {
