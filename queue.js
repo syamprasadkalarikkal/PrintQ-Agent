@@ -3,7 +3,7 @@ const supabase = require("./supabase");
 const TABLE_NAME = process.env.PRINT_JOBS_TABLE || "print_jobs";
 const STATUS_QUEUED = process.env.PRINT_STATUS_QUEUED || "queued";
 const STATUS_PROCESSING = process.env.PRINT_STATUS_PROCESSING || "processing";
-const STATUS_PRINTED = process.env.PRINT_STATUS_PRINTED || "printed";
+const STATUS_PRINTED = process.env.PRINT_STATUS_PRINTED || "completed";
 const STATUS_FAILED = process.env.PRINT_STATUS_FAILED || "failed";
 
 function uniqueStatuses(...statuses) {
@@ -96,7 +96,7 @@ async function claimNextJob() {
 }
 
 async function markJobPrinted(job) {
-  await updateJobStatus(job, uniqueStatuses(STATUS_PRINTED, "printed", "completed", "done"));
+  await updateJobStatus(job, uniqueStatuses(STATUS_PRINTED, "completed", "complete", "printed", "done"));
 }
 
 async function markJobFailed(job) {

@@ -1,6 +1,5 @@
 const supabase = require("./supabase");
 
-const TABLE_NAME = process.env.PRINT_JOBS_TABLE || "print_jobs";
 const STORAGE_BUCKET = process.env.PRINT_STORAGE_BUCKET || "print-queue";
 const DEFAULT_CLEANUP_DELAY_MS = 0;
 
@@ -27,31 +26,6 @@ async function removeStoredPdf(job) {
     .remove([job.file_path]);
 
   if (error) throw error;
-}
-
-async function removeJobRow(job) {
-  if (job?.id) {
-    const { error } = await supabase
-      .from(TABLE_NAME)
-      .delete()
-      .eq("id", job.id);
-
-    if (error) throw error;
-    return;
-  }
-
-  if (job?.customer_token && job?.file_path) {
-    const { error } = await supabase
-      .from(TABLE_NAME)
-      .delete()
-      .eq("customer_token", job.customer_token)
-      .eq("file_path", job.file_path);
-
-    if (error) throw error;
-    return;
-  }
-
-  throw new Error("Cannot delete print job row without id or customer_token plus file_path.");
 }
 
 async function archiveJobStats(job) {
@@ -125,8 +99,7 @@ async function cleanupPrintedJob(job) {
   }
 
   await removeStoredPdf(job);
-  await removeJobRow(job);
-  console.log(`Archived and removed printed job ${jobLabel(job)} from Supabase table and storage.`);
+  console.log(`Archived printed job ${jobLabel(job)} and removed its Supabase storage file.`);
 }
 
 function schedulePrintedJobCleanup(job, delayMs = CLEANUP_DELAY_MS) {
